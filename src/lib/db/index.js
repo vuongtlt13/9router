@@ -67,6 +67,11 @@ export {
   saveRequestDetail, getRequestDetails, getRequestDetailById,
 } from "./repos/requestDetailsRepo.js";
 
+// RTK events
+export {
+  insertRtkEvents, getRtkStats, getRtkCommandStats, getRtkMachineStats, getRecentRtkEvents,
+} from "./repos/rtkEventsRepo.js";
+
 // Export/import full DB
 export async function exportDb() {
   const db = await getAdapter();
