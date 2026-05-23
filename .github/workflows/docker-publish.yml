@@ -24,7 +24,12 @@ concurrency:
   queue: max
 
 env:
+<<<<<<< HEAD
   DOCKERHUB_IMAGE: decolua/9router
+=======
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+>>>>>>> b0145c89 (chore: make Docker Hub image configurable)
 
 jobs:
   prepare:
