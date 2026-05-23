@@ -1,5 +1,5 @@
 // Latest schema version — bumped when a migration is added in ./migrations/
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -146,6 +146,30 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_provider ON requestDetails(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
+    ],
+  },
+  rtkEvents: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      sourceId: "TEXT NOT NULL UNIQUE",
+      machineId: "TEXT NOT NULL",
+      localId: "INTEGER NOT NULL",
+      command: "TEXT",
+      originalCmd: "TEXT",
+      inputTokens: "INTEGER DEFAULT 0",
+      outputTokens: "INTEGER DEFAULT 0",
+      savedTokens: "INTEGER DEFAULT 0",
+      savingsPct: "REAL DEFAULT 0",
+      execTimeMs: "INTEGER DEFAULT 0",
+      projectPath: "TEXT",
+      createdAt: "TEXT NOT NULL",
+      receivedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_rtk_source_id ON rtkEvents(sourceId)",
+      "CREATE INDEX IF NOT EXISTS idx_rtk_machine_local ON rtkEvents(machineId, localId)",
+      "CREATE INDEX IF NOT EXISTS idx_rtk_created_at ON rtkEvents(createdAt DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_rtk_command ON rtkEvents(command)",
     ],
   },
 };
