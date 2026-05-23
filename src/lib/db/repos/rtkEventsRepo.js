@@ -52,9 +52,8 @@ function buildFilterWhere(filter = {}) {
 }
 
 function efficiencyPct(inputTokens, outputTokens, savedTokens) {
-  const total = inputTokens + outputTokens + savedTokens;
-  if (total <= 0) return 0;
-  return clampPct((savedTokens / total) * 100);
+  if (inputTokens <= 0) return 0;
+  return clampPct((savedTokens / inputTokens) * 100);
 }
 
 function rowToEvent(row) {
