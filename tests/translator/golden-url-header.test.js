@@ -2,6 +2,7 @@
 // Sinh snapshot lần đầu (baseline) → sau refactor chạy lại phải khớp y hệt.
 // Mock proxyFetch + uuid-heavy executors KHÔNG cần ở đây vì chỉ gọi buildUrl/buildHeaders (pure).
 import { describe, it, expect } from "vitest";
+import { hostname } from "os";
 import { PROVIDERS } from "../../open-sse/config/providers.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
 
@@ -24,9 +25,15 @@ const SPECIALIZED = new Set([
 ]);
 
 // Sanitize header: khử token + mọi giá trị phụ thuộc môi trường (app version,
-// platform, arch, node version, kimi timestamp) để snapshot ổn định & PORTABLE
-// across machines / OS / node versions / CI. Dùng giá trị runtime hiện tại
-// (process.platform/arch/version) nên khớp trên mọi máy, không chỉ máy sinh golden.
+// platform, arch, node version, hostname, kimi timestamp) để snapshot ổn định
+// & PORTABLE across machines / OS / node versions / CI. Dùng giá trị runtime
+// hiện tại (process.platform/arch/version, os.hostname()) nên khớp trên mọi
+// máy, không chỉ máy sinh golden.
+let currentHostname = "unknown";
+try {
+  currentHostname = hostname() || "unknown";
+} catch { /* noop */ }
+
 function sanitize(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers)) {
@@ -38,7 +45,8 @@ function sanitize(headers) {
       .replace(/9Router\/\d+\.\d+\.\d+\S*/g, "9Router/<VER>")
       .replaceAll(process.version, "<NODEVER>")        // e.g. v20.20.2
       .replaceAll(process.platform, "<PLATFORM>")      // e.g. linux / darwin
-      .replaceAll(process.arch, "<ARCH>");             // e.g. x64 / arm64
+      .replaceAll(process.arch, "<ARCH>")              // e.g. x64 / arm64
+      .replaceAll(currentHostname, "<HOSTNAME>");      // os.hostname(), differs per CI runner/machine
     // App version cũng xuất hiện trần trong các header này.
     if (k === "X-CLIENT-VERSION" || k === "X-CORE-VERSION") s = "<VER>";
     out[k] = s;
