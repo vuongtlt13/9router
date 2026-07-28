@@ -7,7 +7,8 @@ import {
   wrapConnectRPCFrame,
   decodeMessage,
   parseConnectRPCFrame,
-  extractTextFromResponse
+  extractTextFromResponse,
+  encodeMcpTools
 } from "../utils/cursorProtobuf.js";
 import { buildCursorHeaders } from "../utils/cursorChecksum.js";
 import { estimateUsage } from "../utils/usageTracking.js";
@@ -83,6 +84,22 @@ function isAgentTextRequest(body) {
   });
 }
 
+// Accepts tool_calls/tool-result history too, unlike isAgentTextRequest above —
+// exported for the AgentService MCP tool-calling codec, not yet wired into
+// execute()'s dispatch since the response stream doesn't handle incoming
+// tool-call requests from the server yet.
+export function isAgentCapableRequest(body) {
+  if (!Array.isArray(body?.messages)) return false;
+  return body.messages.every((message) => {
+    if (message?.role === "tool") return true;
+    if (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) return true;
+    const content = message?.content;
+    if (typeof content === "string") return true;
+    if (Array.isArray(content)) return content.every((part) => part?.type === "text");
+    return false;
+  });
+}
+
 function encodeHistoryMessage(message) {
   const content = textFromContent(message?.content);
   if (!content) return null;
@@ -95,7 +112,7 @@ function encodeHistoryMessage(message) {
   return agentMessage(1, agentMessage(1, agentMessage(1, text)));
 }
 
-function buildAgentRunFrame(messages, model) {
+export function buildAgentRunFrame(messages, model, tools = []) {
   const system = messages
     .filter((message) => message?.role === "system")
     .map((message) => textFromContent(message.content))
@@ -124,10 +141,12 @@ function buildAgentRunFrame(messages, model) {
   );
   const conversationAction = agentMessage(1, userAction);
   const requestedModel = concatBuffers(agentString(1, model), agentBool(7, true));
+  const mcpTools = tools?.length ? encodeMcpTools(tools) : null;
   const runRequest = concatBuffers(
     // An empty ConversationStateStructure starts a fresh local agent session.
     agentMessage(1, new Uint8Array()),
     agentMessage(2, conversationAction),
+    ...(mcpTools ? [agentMessage(4, mcpTools)] : []),
     ...(system ? [agentString(8, system)] : []),
     agentMessage(9, requestedModel),
   );
