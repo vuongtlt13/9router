@@ -1,6 +1,6 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, isQuotaDepleted, getQuotaResetUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
@@ -17,6 +17,11 @@ function githubMonthlyResetMs(status, errorText, provider) {
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
 }
+
+// Throttle "out of quota" skip logs (selection runs per-request, so a depleted
+// account would otherwise flood the console log). Per-connection, last-logged ms.
+const QUOTA_SKIP_LOG_THROTTLE_MS = 60_000;
+const quotaSkipLogAt = new Map();
 
 /**
  * Get provider credentials from localDb
@@ -81,10 +86,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const isAntigravity = providerId === "antigravity";
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
 
-    // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
+    // Filter out model-locked, quota-depleted, excluded, and Antigravity quota-exhausted connections.
+    // Collect quota-depleted skips so we can surface them to the console log.
+    const quotaDepletedSkips = [];
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
+      const quotaResetUntil = getQuotaResetUntil(c);
+      if (quotaResetUntil) {
+        quotaDepletedSkips.push({ conn: c, quotaResetUntil });
+        return false; // out of quota — skip until resetAt
+      }
       // Antigravity: skip if live quota exhausted for this model
       if (isAntigravity && model && antigravityQuotaCache) {
         const quota = antigravityQuotaCache.get(c.id)?.[model];
@@ -97,6 +109,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return true;
     });
 
+    // Log each quota-based skip (throttled per account) so it shows in
+    // /dashboard/console-log: which account is out of quota and when it resets.
+    for (const { conn: c, quotaResetUntil } of quotaDepletedSkips) {
+      const last = quotaSkipLogAt.get(c.id) || 0;
+      if (Date.now() - last >= QUOTA_SKIP_LOG_THROTTLE_MS) {
+        quotaSkipLogAt.set(c.id, Date.now());
+        const connName = c.displayName || c.name || c.email || c.id?.slice(0, 8);
+        log.info("AUTH", `${provider} | skip "${connName}" — out of quota, resets ${quotaResetUntil} (${formatRetryAfter(quotaResetUntil)})`);
+      }
+    }
+
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
@@ -108,9 +131,15 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     });
 
     if (availableConnections.length === 0) {
-      // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
-      const lockedConns = connections.filter(c => isModelLockActive(c, model));
-      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      // Find earliest unavailability expiry (model lock, persisted quota reset, or
+      // lazy Antigravity quota-cache reset) for retry timing.
+      const lockedConns = connections.filter(c => isModelLockActive(c, model) || isQuotaDepleted(c));
+      const expiries = lockedConns.map(c => {
+        const lockUntil = getEarliestModelLockUntil(c);
+        const quotaReset = getQuotaResetUntil(c);
+        if (lockUntil && quotaReset) return lockUntil < quotaReset ? lockUntil : quotaReset;
+        return lockUntil || quotaReset;
+      }).filter(Boolean);
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
           const resetAt = antigravityQuotaCache.get(c.id)?.[model]?.resetAt;
