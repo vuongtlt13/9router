@@ -11,7 +11,16 @@ import { openaiToKiroRequest } from "../../open-sse/translator/request/openai-to
 
 const contentOf = (result) =>
   result.conversationState.currentMessage.userInputMessage.content;
-const systemPromptOf = (result) => result.systemPrompt || "";
+// The system prompt is no longer a top-level payload member (Kiro answers a body
+// carrying one with 400 REQUEST_BODY_INVALID) — it is embedded at the head of the
+// session-start user turn, which is history[0] once a session has replayed and
+// the current message on the very first turn.
+const systemPromptOf = (result) => {
+  const cs = result?.conversationState;
+  const firstUser = (Array.isArray(cs?.history) ? cs.history : [])
+    .find((item) => item?.userInputMessage)?.userInputMessage;
+  return (firstUser || cs?.currentMessage?.userInputMessage)?.content || "";
+};
 
 describe("openaiToKiroRequest", () => {
   describe("basic message conversion", () => {
@@ -568,7 +577,7 @@ describe("openaiToKiroRequest", () => {
       expect(systemPromptOf(result)).toContain("<max_thinking_length>16000</max_thinking_length>");
     });
 
-    it("keeps top-level systemPrompt stable across turns", () => {
+    it("keeps the embedded system prefix stable across turns and off the top level", () => {
       const first = openaiToKiroRequest(
         "claude-sonnet-4.6-thinking",
         { messages: [{ role: "user", content: "first" }] },
@@ -582,8 +591,14 @@ describe("openaiToKiroRequest", () => {
         {}
       );
 
-      expect(first.systemPrompt).toBe(second.systemPrompt);
-      expect(first.systemPrompt).not.toContain("Current time");
+      // Everything above the volatile time marker is the system prefix; it must be
+      // byte-identical across turns for Kiro's prompt cache to hit.
+      const prefixOf = (r) =>
+        r.conversationState.currentMessage.userInputMessage.content.split("[Context: Current time")[0];
+      expect(prefixOf(first)).toBe(prefixOf(second));
+      expect(prefixOf(first)).toContain("<thinking_mode>enabled</thinking_mode>");
+      expect(first.systemPrompt).toBeUndefined();
+      expect(second.systemPrompt).toBeUndefined();
       expect(first.conversationState.currentMessage.userInputMessage.content).toContain("Current time");
     });
 
@@ -606,7 +621,10 @@ describe("openaiToKiroRequest", () => {
       );
 
       expect(second.conversationState.conversationId).toBe("hermes-session-openai-replay");
-      expect(second.conversationState.agentContinuationId).toBe(first.conversationState.agentContinuationId);
+      expect(first.conversationState.agentContinuationId).toBeUndefined();
+      expect(second.conversationState.agentContinuationId).toBeUndefined();
+      expect(second.conversationState.agentTaskType).toBeUndefined();
+      expect(second.agentMode).toBeUndefined();
       expect(second.conversationState.history[0].userInputMessage.content).toBe(
         first.conversationState.currentMessage.userInputMessage.content
       );

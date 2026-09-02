@@ -29,8 +29,13 @@ describe("OpenAI → Kiro", () => {
     expect(out.additionalModelRequestFields).toEqual({
       reasoning: { effort },
     });
-    expect(out.systemPrompt || "").not.toContain("<thinking_mode>");
-    expect(out.systemPrompt || "").not.toContain("<max_thinking_length>");
+    // The system prefix now rides inside the session-start user turn, so assert
+    // there — a top-level `systemPrompt` would make this vacuously green.
+    const sessionStart =
+      out.conversationState.currentMessage.userInputMessage.content || "";
+    expect(out.systemPrompt).toBeUndefined();
+    expect(sessionStart).not.toContain("<thinking_mode>");
+    expect(sessionStart).not.toContain("<max_thinking_length>");
   });
 
   // openai-to-kiro.js — safeJSONParse guards bad tool-call JSON (fixed in PR #1582)

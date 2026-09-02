@@ -133,7 +133,11 @@ function response(frames, status = 200) {
 async function execute(executor = new KiroExecutor(), overrides = {}) {
   return executor.execute({
     model: "kr/claude-opus-4.8",
-    body: { systemPrompt: "base", conversationState: {} },
+    body: {
+      // No top-level systemPrompt any more — the repair instruction lands on the
+      // current user turn, which is where the system prefix now lives.
+      conversationState: { currentMessage: { userInputMessage: { content: "base" } } },
+    },
     stream: true,
     credentials,
     ...overrides
